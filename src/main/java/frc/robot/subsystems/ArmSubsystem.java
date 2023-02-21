@@ -5,84 +5,41 @@
 package frc.robot.subsystems;
 
 import com.revrobotics.CANSparkMax;
+import com.revrobotics.RelativeEncoder;
+import com.revrobotics.SparkMaxPIDController;
 import com.revrobotics.CANSparkMax.ControlType;
 import com.revrobotics.CANSparkMax.IdleMode;
 import com.revrobotics.CANSparkMaxLowLevel.MotorType;
-import com.revrobotics.REVPhysicsSim;
-import com.revrobotics.RelativeEncoder;
-import com.revrobotics.SparkMaxPIDController;
 
-import edu.wpi.first.math.VecBuilder;
-import edu.wpi.first.math.controller.ProfiledPIDController;
-import edu.wpi.first.math.system.plant.DCMotor;
-import edu.wpi.first.math.trajectory.TrapezoidProfile;
-import edu.wpi.first.math.util.Units;
-import edu.wpi.first.wpilibj.DriverStation;
-import edu.wpi.first.wpilibj.RobotBase;
-import edu.wpi.first.wpilibj.RobotController;
-import edu.wpi.first.wpilibj.simulation.BatterySim;
-import edu.wpi.first.wpilibj.simulation.RoboRioSim;
-import edu.wpi.first.wpilibj.simulation.SingleJointedArmSim;
-import edu.wpi.first.wpilibj.smartdashboard.Mechanism2d;
-import edu.wpi.first.wpilibj.smartdashboard.MechanismLigament2d;
-import edu.wpi.first.wpilibj.smartdashboard.MechanismRoot2d;
-import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
-import edu.wpi.first.wpilibj.util.Color;
-import edu.wpi.first.wpilibj.util.Color8Bit;
+import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.networktables.DoubleEntry;
+import edu.wpi.first.networktables.DoublePublisher;
+import edu.wpi.first.networktables.DoubleSubscriber;
+import edu.wpi.first.networktables.NetworkTable;
+import edu.wpi.first.networktables.NetworkTableInstance;
+import edu.wpi.first.networktables.PubSubOption;
+import edu.wpi.first.networktables.PubSubOptions;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 
 public class ArmSubsystem extends SubsystemBase {
 
-    // THESES SHUOLD BE IN CONFIG
-    private static final double m_arm0Reduction = 60;
-    private static final double m_arm0Mass = 5.0; // Kilograms
-    private static final double m_arm0Length = Units.inchesToMeters(30);
-    private static final double m_arm0Noise = 2.0 * Math.PI / 4096;
-    private final double encoder0PosConversion = 2 * Math.PI / m_arm0Reduction;
+    private final double ARM0_GEAR_REDUCTION = 60.0;
+    private final double ARM0_POS_CONVERSION = 2 * Math.PI / ARM0_GEAR_REDUCTION;
+    private final double ARM0_VEL_CONVERSION = ARM0_POS_CONVERSION / 60.0; // Convert meters/minute to meters/second
 
-    CANSparkMax m_motor0;
+    private final String m_tuningTable = "Arm/Arm0Tuning";
+    private final String m_dataTable = "Arm/Arm0Data";
 
-    SparkMaxPIDController m_sparkPid0;
+    private CANSparkMax m_motor0;
+    private SparkMaxPIDController m_sparkPid0;
+    private RelativeEncoder m_encoder0;
 
-    RelativeEncoder m_encoder0;
-
-    ProfiledPIDController m_pid0;
-
-
-    // Create a Mechanism2d display of an Arm with a fixed ArmTower and moving Arm.
-    private final Mechanism2d m_mech2d = new Mechanism2d(60, 60);
-    private final MechanismRoot2d m_armPivot = m_mech2d.getRoot("ArmPivot", 30, 30);
-    private final MechanismLigament2d m_armTower =
-            m_armPivot.append(new MechanismLigament2d("ArmTower", 30, -90, 5, new Color8Bit(Color.kBlue)));
-            
-    private final MechanismLigament2d m_arm =
-            m_armPivot.append(
-                new MechanismLigament2d(
-                    "Arm",
-                    30,
-                    90,
-                    6,
-                    new Color8Bit(Color.kYellow)));
+    private DoubleEntry[] m_arm0PIDSubs;
+    private DoublePublisher m_arm0PosPub;
+    private DoublePublisher m_arm0SetpointPub;
+    private DoubleEntry m_arm0VoltsAtHorizontal;
 
 
-    // Simulation classes help us simulate what's going on, including gravity.
-  
-    // This arm sim represents an arm that can travel from -75 degrees (rotated down front)
-    // to 255 degrees (rotated down in the back).
-    private final SingleJointedArmSim m_armSim =
-        new SingleJointedArmSim(
-            DCMotor.getNEO(1),
-            m_arm0Reduction,
-            SingleJointedArmSim.estimateMOI(m_arm0Length, m_arm0Mass),
-            m_arm0Length,
-            Units.degreesToRadians(-75),
-            Units.degreesToRadians(255),
-            m_arm0Mass,
-            true,
-            VecBuilder.fill(m_arm0Noise) // Add noise with a small std-dev
-        );
-
-    
     private static ArmSubsystem INSTANCE;
     public static ArmSubsystem getInstance() {
         if (INSTANCE == null) {
@@ -92,70 +49,87 @@ public class ArmSubsystem extends SubsystemBase {
     }
 
     /** Creates a new ArmSubsystem. */
-    public ArmSubsystem() {
-        m_motor0 = new CANSparkMax(12, MotorType.kBrushless);
+    private ArmSubsystem() {
+        setupArm0();
+       
+    }
 
+    private void setupArm0() {
+        m_motor0 = new CANSparkMax(18, MotorType.kBrushless);
         m_motor0.restoreFactoryDefaults();
+        m_motor0.setInverted(false);
+        m_motor0.setIdleMode(IdleMode.kBrake);
+        m_motor0.setSmartCurrentLimit(35);
+        m_motor0.setClosedLoopRampRate(2);
+
+        m_encoder0 = m_motor0.getEncoder();
+        m_encoder0.setPositionConversionFactor(ARM0_POS_CONVERSION);
+        m_encoder0.setVelocityConversionFactor(ARM0_VEL_CONVERSION);
+
+        NetworkTable arm0TuningTable = NetworkTableInstance.getDefault().getTable(m_tuningTable);
+        m_arm0PIDSubs = new DoubleEntry[]{
+            arm0TuningTable.getDoubleTopic("FF").getEntry(0),
+            arm0TuningTable.getDoubleTopic("P").getEntry(0.4),
+            arm0TuningTable.getDoubleTopic("I").getEntry(0.001000),
+            arm0TuningTable.getDoubleTopic("D").getEntry(0.1),
+            arm0TuningTable.getDoubleTopic("IZone").getEntry(0.085000),
+        };
+
+        if (m_arm0PIDSubs[0].getAtomic().timestamp == 0) {
+            m_arm0PIDSubs[0].accept(0);
+            m_arm0PIDSubs[1].accept(0.4);
+            m_arm0PIDSubs[2].accept(0.001000);
+            m_arm0PIDSubs[3].accept(0.1);
+            m_arm0PIDSubs[4].accept(0.085000);
+        }
+        
+
 
         m_sparkPid0 = m_motor0.getPIDController();
-        m_encoder0 = m_motor0.getEncoder();
+        updatePIDSettings();  
+        
+        NetworkTable arm0DataTable = NetworkTableInstance.getDefault().getTable(m_dataTable);
+        m_arm0PosPub = arm0DataTable.getDoubleTopic("MeasuredAngle").publish(PubSubOption.periodic(0.02));
+        m_arm0SetpointPub = arm0DataTable.getDoubleTopic("SetpointAngle").publish(PubSubOption.periodic(0.02));
+        m_arm0VoltsAtHorizontal = arm0DataTable.getDoubleTopic("VoltsAtHorizontal").getEntry(0);
+        m_arm0VoltsAtHorizontal.accept(0.5);
+    }
 
-        m_motor0.setInverted(false);
-        m_motor0.setSmartCurrentLimit(40);
-        m_motor0.setIdleMode(IdleMode.kCoast);
-
-        m_encoder0.setPositionConversionFactor(encoder0PosConversion);
-        m_encoder0.setPosition(0);
-
-        m_pid0 = new ProfiledPIDController(
-            1, 0, 0, 
-            new TrapezoidProfile.Constraints(0, 0));
-
-        // Put Mechanism 2d to SmartDashboard
-        SmartDashboard.putData("Arm Sim", m_mech2d);
-       
+    public void updatePIDSettings() {
+        m_sparkPid0.setFF(m_arm0PIDSubs[0].get());
+        m_sparkPid0.setP(m_arm0PIDSubs[1].get());
+        m_sparkPid0.setI(m_arm0PIDSubs[2].get());
+        m_sparkPid0.setD(m_arm0PIDSubs[3].get());
+        m_sparkPid0.setIZone(m_arm0PIDSubs[4].get()); 
     }
 
     @Override
     public void periodic() {
-        // Update the Mechanism Arm angle based on the simulated arm angle
-        m_arm.setAngle(Units.radiansToDegrees(m_encoder0.getPosition()));
+        m_arm0PosPub.accept(Math.toDegrees(m_encoder0.getPosition()));
     }
 
-    @Override
-    public void simulationPeriodic() {
-        double motor0AppliedOutput = m_motor0.getAppliedOutput();
-
-        if (DriverStation.isDisabled()) {
-            motor0AppliedOutput = 0;
-        }
-
-        // In this method, we update our simulation of what our arm is doing
-        // First, we set our "inputs" (voltages)
-        m_armSim.setInput(motor0AppliedOutput * RobotController.getBatteryVoltage()); 
-
-        // Next, we update it. The standard loop time is 20ms.
-        m_armSim.update(0.020);
-
-        // Finally, we set our simulated encoder's readings and simulated battery voltage
-        m_encoder0.setPosition(m_armSim.getAngleRads());
-
-        // SimBattery estimates loaded battery voltages
-        RoboRioSim.setVInVoltage(
-            BatterySim.calculateDefaultBatteryLoadedVoltage(m_armSim.getCurrentDrawAmps()));
+    public void setArm0(Rotation2d angle) {
+        m_sparkPid0.setReference(angle.getRadians(), ControlType.kPosition, 0, calculateArm0FF());
+        m_arm0SetpointPub.accept(angle.getDegrees());
     }
 
-    public void setAngle(double angle) {
-        double voltage0 = m_pid0.calculate(m_encoder0.getPosition(), angle);
- 
-        m_sparkPid0.setReference(voltage0, ControlType.kVoltage);
+    private double calculateArm0FF() {
+        return m_arm0VoltsAtHorizontal.get() * Math.cos(m_encoder0.getPosition());
+    }
+
+    public void resetArm0Encoder(double valueDeg) {
+        m_encoder0.setPosition(Math.toRadians(valueDeg));
+    }
+
+    public void setArm0IdleMode(IdleMode mode) {
+        m_motor0.setIdleMode(mode);
     }
 
     public void stopMotors() {
-        // Set reference to 0 for arm sim
-        m_sparkPid0.setReference(0, ControlType.kVoltage);
-
         m_motor0.stopMotor();
+    }
 
+    public void testFeedforward(double additionalVoltage) {        
+        m_sparkPid0.setReference(additionalVoltage + calculateArm0FF(), ControlType.kVoltage);
     }
 }

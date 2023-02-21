@@ -5,10 +5,14 @@
 package frc.robot;
 
 import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.CommandScheduler;
+import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.InstantCommand;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.button.Trigger;
 import frc.robot.commands.ArmAngle;
+import frc.robot.commands.ArmFeedforwardTest;
+import frc.robot.subsystems.ArmSubsystem;
 
 /**
  * This class is where the bulk of the robot should be declared. Since
@@ -21,7 +25,7 @@ import frc.robot.commands.ArmAngle;
  */
 public class RobotContainer {
 
-    private final CommandXboxController m_driverController = new CommandXboxController(0);
+    private final CommandXboxController driver = new CommandXboxController(0);
 
     /**
      * The container for the robot. Contains subsystems, OI devices, and commands.
@@ -46,10 +50,24 @@ public class RobotContainer {
      * joysticks}.
      */
     private void configureBindings() {
-        m_driverController.a().whileTrue(new ArmAngle(50));
-        m_driverController.b().whileTrue(new ArmAngle(90));
-        m_driverController.x().whileTrue(new ArmAngle(140));
-        m_driverController.y().whileTrue(new ArmAngle(170));
+        driver.a().whileTrue(new ArmAngle(-90));
+        driver.b().whileTrue(new ArmAngle(-45));
+        driver.y().whileTrue(new ArmAngle(0));
+        driver.x().whileTrue(new ArmAngle(45));
+
+        driver.start().onTrue(Commands.runOnce(
+            () -> ArmSubsystem.getInstance().resetArm0Encoder(-90)
+        ));
+
+        Command arm0FF = new ArmFeedforwardTest(driver, 2);
+
+        driver.leftBumper().onTrue(Commands.runOnce(() -> arm0FF.schedule()));
+        driver.back().onTrue(Commands.sequence(
+            Commands.runOnce(() -> CommandScheduler.getInstance().cancelAll()),
+            Commands.runOnce(() -> ArmSubsystem.getInstance().stopMotors())
+        ));
+
+        driver.rightBumper().onTrue(Commands.runOnce(() -> ArmSubsystem.getInstance().updatePIDSettings()));
     }
 
     /**
