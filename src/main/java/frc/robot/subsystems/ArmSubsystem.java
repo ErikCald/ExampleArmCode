@@ -5,20 +5,22 @@
 package frc.robot.subsystems;
 
 import com.revrobotics.CANSparkMax;
-import com.revrobotics.RelativeEncoder;
-import com.revrobotics.SparkMaxPIDController;
 import com.revrobotics.CANSparkMax.ControlType;
 import com.revrobotics.CANSparkMax.IdleMode;
 import com.revrobotics.CANSparkMaxLowLevel.MotorType;
+import com.revrobotics.RelativeEncoder;
+import com.revrobotics.SparkMaxPIDController;
 
+import edu.wpi.first.math.controller.ArmFeedforward;
+import edu.wpi.first.math.controller.ProfiledPIDController;
 import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.trajectory.TrapezoidProfile.Constraints;
 import edu.wpi.first.networktables.DoubleEntry;
 import edu.wpi.first.networktables.DoublePublisher;
-import edu.wpi.first.networktables.DoubleSubscriber;
 import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.networktables.PubSubOption;
-import edu.wpi.first.networktables.PubSubOptions;
+import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 
 public class ArmSubsystem extends SubsystemBase {
@@ -33,6 +35,12 @@ public class ArmSubsystem extends SubsystemBase {
     private CANSparkMax m_motor0;
     private SparkMaxPIDController m_sparkPid0;
     private RelativeEncoder m_encoder0;
+
+    private ProfiledPIDController m_pid0;
+    private ArmFeedforward m_arm0FF;
+    private double lastSpeed = 0;
+    private double lastTime = 0;
+
 
     private DoubleEntry[] m_arm0PIDSubs;
     private DoublePublisher m_arm0PosPub;
@@ -60,7 +68,7 @@ public class ArmSubsystem extends SubsystemBase {
         m_motor0.setInverted(false);
         m_motor0.setIdleMode(IdleMode.kBrake);
         m_motor0.setSmartCurrentLimit(35);
-        m_motor0.setClosedLoopRampRate(2);
+        // m_motor0.setClosedLoopRampRate(2);
 
         m_encoder0 = m_motor0.getEncoder();
         m_encoder0.setPositionConversionFactor(ARM0_POS_CONVERSION);
@@ -68,25 +76,26 @@ public class ArmSubsystem extends SubsystemBase {
 
         NetworkTable arm0TuningTable = NetworkTableInstance.getDefault().getTable(m_tuningTable);
         m_arm0PIDSubs = new DoubleEntry[]{
-            arm0TuningTable.getDoubleTopic("FF").getEntry(0),
-            arm0TuningTable.getDoubleTopic("P").getEntry(0.4),
-            arm0TuningTable.getDoubleTopic("I").getEntry(0.001000),
-            arm0TuningTable.getDoubleTopic("D").getEntry(0.1),
-            arm0TuningTable.getDoubleTopic("IZone").getEntry(0.085000),
+            arm0TuningTable.getDoubleTopic("FF").getEntry(0.0),
+            arm0TuningTable.getDoubleTopic("P").getEntry(0.0),
+            arm0TuningTable.getDoubleTopic("I").getEntry(0.0),
+            arm0TuningTable.getDoubleTopic("D").getEntry(0.0),
+            arm0TuningTable.getDoubleTopic("IZone").getEntry(0.0),
         };
 
         if (m_arm0PIDSubs[0].getAtomic().timestamp == 0) {
             m_arm0PIDSubs[0].accept(0);
-            m_arm0PIDSubs[1].accept(0.4);
-            m_arm0PIDSubs[2].accept(0.001000);
-            m_arm0PIDSubs[3].accept(0.1);
-            m_arm0PIDSubs[4].accept(0.085000);
+            m_arm0PIDSubs[1].accept(0.0);
+            m_arm0PIDSubs[2].accept(0.0);
+            m_arm0PIDSubs[3].accept(0.0);
+            m_arm0PIDSubs[4].accept(0.0);
         }
         
-
-
         m_sparkPid0 = m_motor0.getPIDController();
+        m_pid0 = new ProfiledPIDController(0, 0, 0, new Constraints(Math.PI/4, Math.PI/4));
         updatePIDSettings();  
+
+        m_arm0FF = new ArmFeedforward(0, 0, 0, 0);
         
         NetworkTable arm0DataTable = NetworkTableInstance.getDefault().getTable(m_dataTable);
         m_arm0PosPub = arm0DataTable.getDoubleTopic("MeasuredAngle").publish(PubSubOption.periodic(0.02));
@@ -96,11 +105,9 @@ public class ArmSubsystem extends SubsystemBase {
     }
 
     public void updatePIDSettings() {
-        m_sparkPid0.setFF(m_arm0PIDSubs[0].get());
-        m_sparkPid0.setP(m_arm0PIDSubs[1].get());
-        m_sparkPid0.setI(m_arm0PIDSubs[2].get());
-        m_sparkPid0.setD(m_arm0PIDSubs[3].get());
-        m_sparkPid0.setIZone(m_arm0PIDSubs[4].get()); 
+        m_pid0.setPID(
+            m_arm0PIDSubs[1].get(), m_arm0PIDSubs[2].get(), m_arm0PIDSubs[3].get());
+
     }
 
     @Override
@@ -109,7 +116,14 @@ public class ArmSubsystem extends SubsystemBase {
     }
 
     public void setArm0(Rotation2d angle) {
-        m_sparkPid0.setReference(angle.getRadians(), ControlType.kPosition, 0, calculateArm0FF());
+        double pidVal = m_pid0.calculate(m_encoder0.getPosition(), angle.getRadians());
+        double acceleration = (m_pid0.getSetpoint().velocity - lastSpeed) / (Timer.getFPGATimestamp() - lastTime);
+        m_motor0.setVoltage(
+            pidVal
+            + m_arm0FF.calculate(m_pid0.getSetpoint().velocity, acceleration));
+        lastSpeed = m_pid0.getSetpoint().velocity;
+        lastTime = Timer.getFPGATimestamp();
+
         m_arm0SetpointPub.accept(angle.getDegrees());
     }
 
