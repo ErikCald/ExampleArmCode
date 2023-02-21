@@ -10,16 +10,20 @@ import frc.robot.subsystems.ArmSubsystem;
 
 public class ArmAngle extends CommandBase {
     private final Rotation2d m_angle;
+    private final boolean m_slowerAcceleration;
     
     /** Creates a new ArmAngle. */
-    public ArmAngle(double angleDeg) {
+    public ArmAngle(double angleDeg, boolean slowerAcceleration) {
         m_angle = Rotation2d.fromDegrees(angleDeg);
+        m_slowerAcceleration = slowerAcceleration;
         addRequirements(ArmSubsystem.getInstance());
     }
 
     // Called when the command is initially scheduled.
     @Override
     public void initialize() {
+        ArmSubsystem.getInstance().setConstraints(m_slowerAcceleration);
+        ArmSubsystem.getInstance().resetMotionProfile();
     }
 
     // Called every time the scheduler runs while the command is scheduled.

@@ -4,6 +4,7 @@
 
 package frc.robot;
 
+import edu.wpi.first.wpilibj.XboxController;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Commands;
@@ -50,10 +51,11 @@ public class RobotContainer {
      * joysticks}.
      */
     private void configureBindings() {
-        driver.a().whileTrue(new ArmAngle(-90));
-        driver.b().whileTrue(new ArmAngle(-45));
-        driver.y().whileTrue(new ArmAngle(0));
-        driver.x().whileTrue(new ArmAngle(45));
+        driver.a().whileTrue(new ArmAngle(-90, true));
+        driver.b().whileTrue(new ArmAngle(-45, false));
+        driver.y().whileTrue(new ArmAngle(0, false));
+        driver.x().whileTrue(new ArmAngle(45, false));
+        driver.axisGreaterThan(XboxController.Axis.kLeftTrigger.value, 0.5).whileTrue(new ArmAngle(85, false));
 
         driver.start().onTrue(Commands.runOnce(
             () -> ArmSubsystem.getInstance().resetArm0Encoder(-90)
